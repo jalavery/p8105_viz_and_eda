@@ -1,0 +1,240 @@
+---
+title: "Exploratory Data Analysis"
+author: "Jessica Lavery"
+date: "9/26/2019"
+output: github_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(viridis)
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      fig.width = 8,
+                      fig.height = 6,
+                      out.width = "90%")
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+```{r, cache = TRUE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(c("USW00094728", "USC00519397", "USS0023B17S"),
+                      var = c("PRCP", "TMIN", "TMAX"), 
+                      date_min = "2017-01-01",
+                      date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY", 
+                      USC00519397 = "Waikiki_HA",
+                      USS0023B17S = "Waterhole_WA"),
+    tmin = tmin / 10,
+    tmax = tmax / 10,
+    month = lubridate::floor_date(date, unit = "month")) %>%
+  select(name, id, date, month, everything())
+```
+
+## `group_by` and counting
+```{r}
+weather_df %>% 
+  group_by(name, month)
+```
+
+```{r}
+weather_df %>% 
+  group_by(name, month) %>% 
+  summarize(n_obs = n())
+```
+
+### `n_distinct`
+
+```{r}
+weather_df %>% 
+  group_by(month) %>% 
+  summarize(n_obs = n(),
+            n_unique = n_distinct(date))
+```
+
+
+### `count`
+
+Count shortens using `group_by` and `summarize`.
+
+```{r}
+# default varible name for count is n
+weather_df %>% 
+  count(name)
+
+# can also customize this
+weather_df %>% 
+  count(name, name = "n_days")
+```
+
+** Never use base R's table() function ** 
+
+```{r}
+tbl <- weather_df %>% 
+  pull(name) %>% 
+  table()
+
+# print the result
+tbl
+
+# result is of class "table", not a data frame! 
+class(tbl)
+
+# same as table(weather_df$name)
+```
+
+## Kable
+
+Let's make a nice table
+
+```{r}
+weather_df %>% 
+  count(name) %>% 
+  knitr::kable()
+```
+
+## 2x2 tables
+
+```{r}
+weather_df %>% 
+  filter(name != "Waikiki_HA") %>% 
+  mutate(
+    cold = case_when(
+      tmax < 5  ~ "cold",
+      tmax >= 5 ~ "not cold",
+      TRUE      ~ ""
+    )
+  ) %>% 
+  group_by(name, cold) %>% 
+  count() %>% 
+  pivot_wider(
+    names_from = cold,
+    values_from = n
+  )
+```
+
+Alternative approach using `janitor::tabyl()`
+
+https://cran.r-project.org/web/packages/janitor/vignettes/tabyls.html
+
+```{r}
+weather_df %>% 
+  filter(name != "Waikiki_HA") %>% 
+  mutate(
+    cold = case_when(
+      tmax < 5  ~ "cold",
+      tmax >= 5 ~ "not cold",
+      TRUE      ~ ""
+    )
+  ) %>% 
+  janitor::tabyl(name, cold) %>%
+  janitor::adorn_percentages("row") %>%
+  janitor::adorn_pct_formatting(digits = 2) %>%
+  janitor::adorn_ns() %>% 
+  kable()
+```
+
+## general summaries
+
+By deafult, any time that you compute a numeric summary of something that includes an NA, R returns an NA. Options: drop these rows from the data, modify function to ignore NAs in computation via na.rm = TRUE. Don't do the latter option by default, look at the missing values and make sure you understand what's going on. 
+
+Can also pipe in the summary into ggplot to create a visual of the summary that was created. 
+
+```{r}
+weather_df %>% 
+  group_by(name, month) %>%
+  summarize(
+    n = n(),
+    mean_tmax = mean(tmax, na.rm = TRUE),
+    sd_tmax = sd(tmax, na.rm = TRUE),
+    median_prcp = median(prcp, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = month, y = mean_tmax, color = name)) + 
+    geom_point() + geom_line() + 
+    theme(legend.position = "bottom")
+```
+
+### user-friendly summaries
+
+The output won't be in "tidy" format, but will be more user-friendly. 
+
+```{r}
+weather_df %>% 
+  group_by(name, month) %>% 
+  summarize(
+    mean_tmax = mean(tmax, na.rm = TRUE)
+  ) %>% 
+  pivot_wider(
+    names_from = name,
+    values_from = mean_tmax) %>% 
+  knitr::kable()
+```
+
+### ungrouping
+
+```{r}
+weather_df %>% 
+  group_by(name) %>% 
+  ungroup()
+```
+
+### grouping & mutating
+
+All mutating will be group-specific.
+
+```{r}
+weather_df %>% 
+  group_by(name) %>% 
+  mutate(
+    mean_tmax = mean(tmax, na.rm = TRUE),
+    centered_tmax = tmax - mean_tmax
+  ) %>% 
+  ggplot(aes(x = date, y = centered_tmax, color = name)) +
+  geom_point()
+```
+
+#### Window functions in grouped mutates
+To get the rank in terms of order (first coldest day, 2nd, etc.), want to take all tmax values and sort and rank.
+
+```{r}
+# look at ?min_rank for description of windowed rank functions
+
+weather_df %>% 
+  group_by(name, month) %>% 
+  mutate(
+    tmax_rank = min_rank(tmax),
+    tmax_rank_desc = min_rank(desc(tmax))
+  ) %>% 
+  arrange(name, month, tmax_rank) %>% 
+  filter(tmax_rank == 1) # to get the coldest day in each location in each month
+```
+
+### lag
+
+Look at change in max temperature from current day to next day
+
+Opposite of the lag function is the lead function. 
+
+```{r}
+weather_df %>%
+  group_by(name)  %>% 
+  arrange(name, date) %>% 
+  mutate(one_day_tmax_change = tmax - lag(tmax)) %>% summarize(sd_daily_chnge = sd(one_day_tmax_change, na.rm = TRUE))
+```
+
+
+
