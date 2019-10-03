@@ -1,0 +1,188 @@
+---
+title: "Data Visualization and Exploratory Data Analysis"
+author: "Jessica Lavery"
+date: "10/1/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# changing the size of a figure
+# out.width/out.height control the size of the figure inserted into your document
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+library(tidyverse)
+library(ggridges)
+library(patchwork)
+
+# to apply the same formats/themes to all plots
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+```
+
+# Read in data from rnoaa package
+
+```{r, message = FALSE, cache = TRUE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(c("USW00094728", "USC00519397", "USS0023B17S"),
+                      var = c("PRCP", "TMIN", "TMAX"), 
+                      date_min = "2017-01-01",
+                      date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY", 
+                      USC00519397 = "Waikiki_HA",
+                      USS0023B17S = "Waterhole_WA"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+weather_df
+```
+
+```{r}
+base_plot <- weather_df %>% 
+  ggplot(aes(x = tmin, y = tmax, color = name)) + 
+  geom_point(alpha = 0.5) + 
+  labs(
+    title = "Temperature plot",
+    x = "Minimum Temp (C)",
+    y = "Maximum Temp (C)",
+    caption = "Data from NOAA via rnoaa package"
+  ) + 
+  scale_x_continuous(
+    breaks = c(-15, -5, 20),
+    labels = c("-15c (too cold)", "-5c", "20c")
+  ) +
+  viridis::scale_color_viridis(
+    name = "Location", 
+    discrete = TRUE
+  )
+  # scale_color_hue(
+  #   name = "Weather Station Location",
+  #   h = c(50, 250)
+  # )
+  # scale_y_continuous(
+  #   trans = "sqrt"
+  # )
+
+base_plot
+```
+
+# Themes
+```{r}
+# order matters! can't change the legend position and then apply theme_minimal()
+base_plot + 
+  theme_minimal() + 
+  theme(legend.position = "bottom")
+```
+
+# More than one dataset
+```{r}
+central_park = 
+  weather_df %>% 
+  filter(name == "CentralPark_NY")
+
+waikiki = 
+  weather_df %>% 
+  filter(name == "Waikiki_HA")
+
+ggplot(data = waikiki, aes(x = date, y = tmax, color = name)) + 
+  geom_point() + 
+  geom_line(data = central_park)
+```
+
+# Multi-panel plots
+The below is not a problem that can be solved using faceting, so we need to use the patchwork package.
+
+```{r}
+gg_scatter <- weather_df %>% 
+  ggplot(aes(x = tmin, y = tmax)) + 
+  geom_point()
+
+gg_density <- weather_df %>% 
+  ggplot(aes(x = tmin)) + 
+  geom_density()
+
+gg_boxplot <- weather_df %>% 
+  ggplot(aes(x = name, y = tmax)) + 
+  geom_boxplot()
+
+# put all three plots together
+# order of operations does matter
+gg_scatter + gg_density / gg_boxplot
+
+```
+
+# Reordering categorical variables
+```{r}
+weather_df %>% 
+  mutate(name = factor(name),
+         name = fct_relevel(name, "Waikiki_HA", "CentralPark_NY")) %>% 
+  ggplot(aes(x = name, y = tmax)) + 
+  geom_boxplot()
+
+# vs fct_reorder: changes order of factors based on range of variable tmax
+weather_df %>% 
+  mutate(name = factor(name),
+         name = fct_reorder(name, tmax)) %>% 
+  ggplot(aes(x = name, y = tmax)) + 
+  geom_boxplot()
+```
+
+
+## restructure then plot
+```{r}
+weather_df %>%
+  pivot_longer(
+    tmax:tmin,
+    names_to = "observation",
+    values_to = "temperature"
+  ) %>% 
+  ggplot(aes(x = temperature, fill = observation)) + 
+  geom_density() +
+  facet_grid(~name) + 
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+pup_data = 
+  read_csv("./data/FAS_pups.csv", col_types = "ciiiii") %>%
+  janitor::clean_names() %>%
+  mutate(sex = recode(sex, `1` = "male", `2` = "female")) 
+
+litter_data = 
+  read_csv("./data/FAS_litters.csv", col_types = "ccddiiii") %>%
+  janitor::clean_names() %>%
+  select(-pups_survive) %>%
+  separate(group, into = c("dose", "day_of_tx"), sep = 3) %>%
+  mutate(wt_gain = gd18_weight - gd0_weight,
+         day_of_tx = as.numeric(day_of_tx))
+
+fas_data = left_join(pup_data, litter_data, by = "litter_number") 
+
+fas_data %>% 
+  select(sex, dose, day_of_tx, pd_ears:pd_walk) %>% 
+  pivot_longer(
+    pd_ears:pd_walk,
+    names_to = "outcome", 
+    values_to = "pn_day") %>% 
+  drop_na() %>% 
+  mutate(outcome = forcats::fct_reorder(outcome, day_of_tx, median)) %>% 
+  ggplot(aes(x = dose, y = pn_day)) + 
+  geom_violin() + 
+  facet_grid(day_of_tx ~ outcome)
+```
+
